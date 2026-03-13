@@ -652,10 +652,31 @@ function UploadPanel({ onAnalyse }) {
       const rdata=await resp.json();
       if(rdata.type==="error")throw new Error(rdata.error?.message||"API error");
       const raw=rdata.content?.find(b=>b.type==="text")?.text||"";
-      const match=raw.match(/\{[\s\S]*\}/);
-      if(!match)throw new Error("No JSON found in response");
-      const parsed=JSON.parse(match[0]);
-      if(!parsed.players?.length)throw new Error("No players found in response");
+      // Robust JSON extraction: find outermost { } block
+      const firstBrace=raw.indexOf("{");
+      const lastBrace=raw.lastIndexOf("}");
+      if(firstBrace===-1||lastBrace===-1)throw new Error("No JSON found in response — try uploading again.");
+      let jsonStr=raw.slice(firstBrace,lastBrace+1);
+      // Auto-fix common AI JSON mistakes
+      jsonStr=jsonStr
+        .replace(/,(\s*[}\]])/g,"$1")          // trailing commas
+        .replace(/
+/g," ")                      // newlines inside strings
+        .replace(/[ -]/g," ")         // control chars
+        .replace(/"fixtures":\s*\[\s*\.\.\.\s*\]/g,'"fixtures":[]') // literal ...
+        .replace(/:\s*<[^>]+>/g,':null');        // leftover template placeholders
+      let parsed;
+      try { parsed=JSON.parse(jsonStr); }
+      catch(parseErr) {
+        // Last resort: try to extract just the players array
+        throw new Error("Could not parse squad data. Try screenshotting the full pitch view (all 15 players visible) and uploading again.");
+      }
+      if(!parsed.players?.length)throw new Error("No players found — make sure all 15 players are visible in the screenshot.");
+      // Ensure every player has required fields with defaults
+      parsed.players=parsed.players.map(p=>({
+        status:"available", chance_of_playing:null, bench:false,
+        captain:false, vice:false, fixtures:[], ...p
+      }));
       onAnalyse(parsed,preview);
     } catch(e){setError(e.message);}
     finally{setLoading(false);}
