@@ -8,9 +8,8 @@
   <meta name="apple-mobile-web-app-title" content="FPL Intel"/>
   <meta name="theme-color" content="#0c0f1a"/>
   <title>FPL Squad Intelligence</title>
-  <!-- PWA icon (inline SVG as data URI so no external files needed) -->
-  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' fill='%230c0f1a' rx='40'/%3E%3Ccircle cx='90' cy='90' r='50' fill='none' stroke='%23c9a84c' stroke-width='6'/%3E%3Ctext x='90' y='108' font-family='serif' font-size='56' fill='%23c9a84c' text-anchor='middle'%3E⚽%3C/text%3E%3C/svg%3E"/>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0f1a' rx='6'/%3E%3Ctext x='16' y='24' font-size='20' text-anchor='middle'%3E⚽%3C/text%3E%3C/svg%3E"/>
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' fill='%230c0f1a' rx='40'/%3E%3Ccircle cx='90' cy='90' r='50' fill='none' stroke='%23c9a84c' stroke-width='6'/%3E%3Ctext x='90' y='108' font-family='serif' font-size='56' fill='%23c9a84c' text-anchor='middle'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E"/>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0f1a' rx='6'/%3E%3Ctext x='16' y='24' font-size='20' text-anchor='middle'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E"/>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
@@ -20,14 +19,13 @@
     html, body { height: 100%; background: #0c0f1a; }
     body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
     #root { min-height: 100%; }
-    /* Safe area for iPhone notch */
-    .safe-top    { padding-top: env(safe-area-inset-top, 0px); }
-    .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 20px); }
-    /* Scrollbar */
+    .safe-top    { height: env(safe-area-inset-top, 0px); background: #0c0f1a; }
+    .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom, 0px), 20px); }
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: #0c0f1a; }
     ::-webkit-scrollbar-thumb { background: #1e2540; border-radius: 2px; }
     @keyframes shimmer { 0%{transform:translateX(-200%)} 100%{transform:translateX(400%)} }
+    input::placeholder { color: #4a4a5a; }
   </style>
 </head>
 <body>
@@ -525,7 +523,11 @@ function UploadPanel({ onAnalyse }) {
   const [preview,  setPreview]  = useState(null);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState(null);
+  const [apiKey,   setApiKey]   = useState(()=>{ try{return localStorage.getItem("fpl_apikey")||"";}catch(e){return "";} });
+  const [showKey,  setShowKey]  = useState(false);
   const inputRef = useRef();
+
+  const saveKey = v => { setApiKey(v); try{localStorage.setItem("fpl_apikey",v);}catch(e){} };
 
   const handleFile = f => {
     if (!f||!f.type.startsWith("image/")) { setError("Please upload a PNG or JPG image."); return; }
@@ -541,6 +543,7 @@ function UploadPanel({ onAnalyse }) {
 
   const analyse = async () => {
     if (!file) return;
+    if (!apiKey.trim()) { setError("Enter your Anthropic API key above first."); return; }
     setLoading(true); setError(null);
     try {
       const base64 = await new Promise((res,rej)=>{
@@ -560,7 +563,12 @@ function UploadPanel({ onAnalyse }) {
 
       const resp = await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{
+          "Content-Type":"application/json",
+          "x-api-key": apiKey.trim(),
+          "anthropic-version":"2023-06-01",
+          "anthropic-dangerous-direct-browser-access":"true",
+        },
         body:JSON.stringify({
           model:"claude-sonnet-4-6", max_tokens:4000,
           messages:[{role:"user",content:[
@@ -569,7 +577,7 @@ function UploadPanel({ onAnalyse }) {
 Structure:
 {
   "current_gw": <number>,
-  "players": [{ "id":"<slug>","web_name":"<name>","pos":<1-4>,"team":"<3-letter>","cost":<float>,"form":<float>,"ppg":<float>,"bench":<bool>,"captain":<bool>,"vice":<bool>,"fixtures":[{"gw":<n>,"opp":"<3-letter>","venue":"H or A","fdr":<1-5>},{"gw":<n+1>,...},{"gw":<n+2>,...}] }],
+  "players": [{ "id":"<slug>","web_name":"<n>","pos":<1-4>,"team":"<3-letter>","cost":<float>,"form":<float>,"ppg":<float>,"bench":<bool>,"captain":<bool>,"vice":<bool>,"fixtures":[{"gw":<n>,"opp":"<3-letter>","venue":"H or A","fdr":<1-5>},{"gw":<n+1>,...},{"gw":<n+2>,...}] }],
   "rotations":{"<gw>":[{"out_id":"<id>","out_name":"<n>","in_id":"<id>","in_name":"<n>","reason":"<why>"}],"<gw+1>":[...],"<gw+2>":[...]},
   "transfers":[{"priority":"HIGH or MEDIUM","out":"<n>","out_reason":"<why>","in":"<n>","in_team":"<3-letter>","in_cost":<float>,"in_reason":"<why>","proj":[<pts>,<pts>,<pts>]}]
 }
@@ -578,21 +586,59 @@ Include all 15 players. Use real FPL season data for fixtures, form, FDR. Output
         })
       });
 
-      if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
-      const data = await resp.json();
-      if (data.type==="error") throw new Error(data.error?.message||"API error");
-      const raw  = data.content?.find(b=>b.type==="text")?.text||"";
-      const match= raw.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("No JSON in response");
+      if (!resp.ok) {
+        const body = await resp.text();
+        if (resp.status===401) throw new Error("Invalid API key — check it and try again.");
+        throw new Error(`API error ${resp.status}: ${body.slice(0,150)}`);
+      }
+      const rdata = await resp.json();
+      if (rdata.type==="error") throw new Error(rdata.error?.message||"API error");
+      const raw   = rdata.content?.find(b=>b.type==="text")?.text||"";
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("No JSON found in response");
       const parsed = JSON.parse(match[0]);
-      if (!parsed.players?.length) throw new Error("No players found");
+      if (!parsed.players?.length) throw new Error("No players found in response");
       onAnalyse(parsed, preview);
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
   };
 
+  const keySet = apiKey.trim().length > 10;
+
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+      {/* API Key */}
+      <div style={{background:T.surface,border:`1px solid ${keySet?`${T.green}55`:T.goldDim}`,borderRadius:12,padding:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+          <span style={{fontSize:14}}>🔑</span>
+          <span style={{color:keySet?T.green:T.gold,fontSize:10,letterSpacing:1.5,textTransform:"uppercase",fontWeight:700}}>
+            {keySet?"API Key Saved":"API Key Required"}
+          </span>
+          {keySet && <Badge label="✓ Ready" color={T.green}/>}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <input
+            type={showKey?"text":"password"}
+            value={apiKey}
+            onChange={e=>saveKey(e.target.value)}
+            placeholder="sk-ant-api03-..."
+            style={{
+              flex:1, background:T.bg, border:`1px solid ${T.border}`,
+              borderRadius:7, padding:"10px 12px", color:T.text,
+              fontFamily:"monospace", fontSize:12, outline:"none",
+            }}
+          />
+          <button onClick={()=>setShowKey(s=>!s)} style={{
+            background:T.bg, border:`1px solid ${T.border}`, color:T.textDim,
+            borderRadius:7, padding:"0 12px", cursor:"pointer", fontSize:12,
+          }}>{showKey?"Hide":"Show"}</button>
+        </div>
+        <div style={{marginTop:8,color:T.textDim,fontSize:11,lineHeight:1.6}}>
+          Get a free key at <span style={{color:T.gold}}>console.anthropic.com</span> → API Keys. Stored on your device only — never sent anywhere else.
+        </div>
+      </div>
+
       {/* Drop zone */}
       <div
         onClick={()=>!loading&&inputRef.current.click()}
@@ -604,16 +650,16 @@ Include all 15 players. Use real FPL season data for fixtures, form, FDR. Output
           borderRadius:12, cursor:loading?"default":"pointer",
           background:dragging?`${T.gold}08`:T.surface,
           transition:"all 0.2s", overflow:"hidden",
-          minHeight: preview?0:160,
+          minHeight:preview?0:140,
           display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-          padding: preview?0:"32px 20px",
+          padding:preview?0:"28px 20px",
         }}>
         {preview
-          ? <img src={preview} alt="Squad" style={{width:"100%",maxHeight:320,objectFit:"contain",borderRadius:12}}/>
+          ? <img src={preview} alt="Squad" style={{width:"100%",maxHeight:300,objectFit:"contain",borderRadius:12}}/>
           : <>
-              <div style={{fontSize:36,marginBottom:12,opacity:0.5}}>📸</div>
-              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:T.textMid,marginBottom:4}}>Drop your squad screenshot</div>
-              <div style={{color:T.textDim,fontSize:12}}>or click to browse · PNG / JPG</div>
+              <div style={{fontSize:32,marginBottom:10,opacity:0.5}}>📸</div>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:T.textMid,marginBottom:4}}>Tap to choose squad screenshot</div>
+              <div style={{color:T.textDim,fontSize:12}}>PNG or JPG from your camera roll</div>
             </>
         }
         <input ref={inputRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
@@ -626,9 +672,10 @@ Include all 15 players. Use real FPL season data for fixtures, form, FDR. Output
             color:T.textDim,padding:"10px",borderRadius:8,cursor:"pointer",
             fontFamily:"'DM Serif Display',serif",fontSize:13,
           }}>Change</button>
-          <button onClick={analyse} style={{
-            flex:2,background:T.gold,border:"none",color:"#0c0f1a",
-            padding:"10px",borderRadius:8,cursor:"pointer",
+          <button onClick={analyse} disabled={!keySet} style={{
+            flex:2,background:keySet?T.gold:"#333",border:"none",
+            color:keySet?"#0c0f1a":T.textDim,
+            padding:"10px",borderRadius:8,cursor:keySet?"pointer":"not-allowed",
             fontFamily:"'DM Serif Display',serif",fontSize:14,fontWeight:600,letterSpacing:0.5,
           }}>Analyse Squad →</button>
         </div>
@@ -649,20 +696,24 @@ Include all 15 players. Use real FPL season data for fixtures, form, FDR. Output
           <div style={{height:2,background:T.border,borderRadius:1,overflow:"hidden"}}>
             <div style={{height:"100%",background:`linear-gradient(90deg,transparent,${T.gold},transparent)`,animation:"shimmer 1.4s infinite",width:"40%"}}/>
           </div>
-          <style>{`@keyframes shimmer{0%{transform:translateX(-200%)}100%{transform:translateX(400%)}}`}</style>
         </div>
       )}
 
       {error && (
-        <div style={{background:`${T.red}0d`,border:`1px solid ${T.red}33`,borderRadius:8,padding:"12px 14px",color:T.red,fontSize:12,lineHeight:1.6}}>
+        <div style={{background:`${T.red}0d`,border:`1px solid ${T.red}33`,borderRadius:8,padding:"12px 14px",color:T.red,fontSize:12,lineHeight:1.7}}>
           ⚠ {error}
         </div>
       )}
 
-      {/* Instructions */}
-      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:18}}>
-        <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:12}}>How it works</div>
-        {[["📱","Open FPL app → Pick Team screen"],["📸","Screenshot showing all 15 players"],["⬆️","Upload above — AI reads your squad"],["⚽","Predictions + rotations generated for 3 GWs"]].map(([ic,tx])=>(
+      {/* How it works */}
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
+        <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>How it works</div>
+        {[
+          ["🔑","Get a free API key at console.anthropic.com → API Keys"],
+          ["📱","Open FPL app → My Team — make sure all 15 players are visible"],
+          ["📸","Take a screenshot of the full pitch view"],
+          ["⚽","Upload it here — AI reads your squad and builds predictions"],
+        ].map(([ic,tx])=>(
           <div key={tx} style={{display:"flex",gap:10,marginBottom:8}}>
             <span style={{flexShrink:0,opacity:0.6}}>{ic}</span>
             <span style={{color:T.textMid,fontSize:12,lineHeight:1.6}}>{tx}</span>
@@ -717,12 +768,11 @@ function App() {
   const [data,    setData]    = useState(PRELOADED);
   const [preview, setPreview] = useState(null);
   const [tab,     setTab]     = useState("gw0");
-  const [budget,  setBudget]  = useState(()=>{ try { return parseFloat(localStorage.getItem("fpl_budget")||"0.5"); } catch(e){ return 0.5; }});
-  const [freeTx,  setFreeTx]  = useState(()=>{ try { return parseInt(localStorage.getItem("fpl_freetx")||"4"); } catch(e){ return 4; }});
+  const [budget,  setBudget]  = useState(()=>{ try{return parseFloat(localStorage.getItem("fpl_budget")||"0.5");}catch(e){return 0.5;} });
+  const [freeTx,  setFreeTx]  = useState(()=>{ try{return parseInt(localStorage.getItem("fpl_freetx")||"4");}catch(e){return 4;} });
 
-  // Persist settings
-  useEffect(()=>{ try { localStorage.setItem("fpl_budget", budget); } catch(e){} }, [budget]);
-  useEffect(()=>{ try { localStorage.setItem("fpl_freetx", freeTx); } catch(e){} }, [freeTx]);
+  useEffect(()=>{ try{localStorage.setItem("fpl_budget",budget);}catch(e){} },[budget]);
+  useEffect(()=>{ try{localStorage.setItem("fpl_freetx",freeTx);}catch(e){} },[freeTx]);
 
   const onAnalyse = (parsed, img) => { setData(parsed); setPreview(img); setTab("gw0"); };
   const gwList    = [data.current_gw, data.current_gw+1, data.current_gw+2];
@@ -742,6 +792,7 @@ function App() {
       paddingBottom:48,
     }}>
       <div className="safe-top" style={{background:T.bg}}/>
+
 
       {/* ── Header ── */}
       <div style={{
@@ -975,7 +1026,6 @@ function App() {
   );
 }
 
-// ── Mount ────────────────────────────────────────────────────────────────────
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
