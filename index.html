@@ -416,6 +416,104 @@ function GWPanel({ gw, players, rotations }) {
         </div>
       )}
 
+      {/* Chip Recommendations */}
+      {(()=>{
+        const ptsTot = parseFloat(total);
+        const avgFdr = starters.reduce((s,p)=>{ const f=(p.fixtures||[]).find(x=>x.gw===gw); return s+(f?f.fdr:3); },0)/Math.max(starters.length,1);
+        const toughFixtures = starters.filter(p=>{ const f=(p.fixtures||[]).find(x=>x.gw===gw); return f&&f.fdr>=4; }).length;
+        const benchPts = bench.reduce((s,p)=>s+predict(p,gw),0);
+
+        // Triple Captain logic: play if captain has easy fixture + high predicted pts
+        const capFdrVal = capFix ? capFix.fdr : 3;
+        const tcPlay  = capPts >= 7 && capFdrVal <= 2;
+        const tcBorder= tcPlay ? `${T.gold}66` : T.border;
+        const tcBg    = tcPlay ? `${T.gold}0a` : T.bg;
+
+        // Bench Boost: play if bench is strong (>15 pts combined)
+        const bbPlay  = benchPts >= 15;
+        const bbBorder= bbPlay ? `${T.green}66` : T.border;
+        const bbBg    = bbPlay ? `${T.green}0a` : T.bg;
+
+        // Free Hit: play if 4+ tough fixtures (FDR 4-5) in starting XI
+        const fhPlay  = toughFixtures >= 4;
+        const fhBorder= fhPlay ? `${T.red}66` : T.border;
+        const fhBg    = fhPlay ? `${T.red}0a` : T.bg;
+
+        // Wildcard: play if squad predicted < 45 pts AND avg fdr > 3.5
+        const wcPlay  = ptsTot < 45 && avgFdr > 3.5;
+        const wcBorder= wcPlay ? `${T.amber}66` : T.border;
+        const wcBg    = wcPlay ? `${T.amber}0a` : T.bg;
+
+        const chips = [
+          {
+            icon:"👑", name:"Triple Captain",
+            play: tcPlay,
+            reason: tcPlay
+              ? `${capPick?.web_name} has a ${fdr(capFdrVal).label.toLowerCase()} fixture (FDR ${capFdrVal}) and is projected ${capPts} pts — tripling him makes sense this week.`
+              : `${capPick?.web_name} is projected ${capPts} pts but ${capFdrVal>=3?`facing FDR ${capFdrVal} — not a clear enough fixture to triple`:"hold for a week with an easier fixture"}.`,
+            color: T.gold,
+          },
+          {
+            icon:"🪑", name:"Bench Boost",
+            play: bbPlay,
+            reason: bbPlay
+              ? `Your bench is projected ${benchPts.toFixed(1)} pts combined — strong enough to justify activating Bench Boost this week.`
+              : `Bench projected at ${benchPts.toFixed(1)} pts. Not worth activating yet — save for a double gameweek when bench value is higher.`,
+            color: T.green,
+          },
+          {
+            icon:"🎯", name:"Free Hit",
+            play: fhPlay,
+            reason: fhPlay
+              ? `${toughFixtures} of your starters face FDR 4-5 fixtures this week — a strong case to Free Hit and field a temporary team.`
+              : `Only ${toughFixtures} tough fixture${toughFixtures!==1?"s":""} this week. Not a bad enough gameweek to burn your Free Hit — hold it.`,
+            color: T.red,
+          },
+          {
+            icon:"🃏", name:"Wildcard",
+            play: wcPlay,
+            reason: wcPlay
+              ? `Squad predicted ${ptsTot} pts with avg FDR ${avgFdr.toFixed(1)} — your squad is underperforming this run. Consider wildcarding to reset.`
+              : `Squad looks solid at ${ptsTot} pts projected. Hold the Wildcard for when fixtures turn or form drops significantly.`,
+            color: T.amber,
+          },
+        ];
+
+        return (
+          <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+            <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8}}>
+              <span style={{color:T.gold,fontSize:10,letterSpacing:1.5,textTransform:"uppercase"}}>Chip Advice</span>
+              <div style={{flex:1,height:1,background:T.border}}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:0}}>
+              {chips.map((c,i)=>(
+                <div key={c.name} style={{
+                  display:"flex",gap:12,alignItems:"flex-start",
+                  padding:"13px 16px",
+                  background: c.play ? (i%2===0?`${c.color}08`:`${c.color}05`) : "transparent",
+                  borderBottom: i<chips.length-1 ? `1px solid ${T.border}` : "none",
+                }}>
+                  <span style={{fontSize:18,flexShrink:0,marginTop:1}}>{c.icon}</span>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+                      <span style={{fontFamily:"'DM Serif Display',serif",fontSize:14,color:T.text}}>{c.name}</span>
+                      <div style={{
+                        background: c.play ? `${c.color}22` : `${T.border}88`,
+                        border: `1px solid ${c.play ? `${c.color}55` : T.border}`,
+                        color: c.play ? c.color : T.textDim,
+                        fontSize:9, fontWeight:700, padding:"2px 8px",
+                        borderRadius:3, letterSpacing:1, textTransform:"uppercase",
+                      }}>{c.play ? "▶ Play" : "◼ Hold"}</div>
+                    </div>
+                    <p style={{color:T.textMid,fontSize:11,lineHeight:1.7,margin:0}}>{c.reason}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Players */}
       <div>
         {[1,2,3,4].map(pos=>{
@@ -607,8 +705,6 @@ Include all 15 players. Use real FPL season data for fixtures, form, FDR. Output
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-
-      {/* API Key */}
       <div style={{background:T.surface,border:`1px solid ${keySet?`${T.green}55`:T.goldDim}`,borderRadius:12,padding:16}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
           <span style={{fontSize:14}}>🔑</span>
@@ -623,101 +719,45 @@ Include all 15 players. Use real FPL season data for fixtures, form, FDR. Output
             value={apiKey}
             onChange={e=>saveKey(e.target.value)}
             placeholder="sk-ant-api03-..."
-            style={{
-              flex:1, background:T.bg, border:`1px solid ${T.border}`,
-              borderRadius:7, padding:"10px 12px", color:T.text,
-              fontFamily:"monospace", fontSize:12, outline:"none",
-            }}
+            style={{flex:1,background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 12px",color:T.text,fontFamily:"monospace",fontSize:12,outline:"none"}}
           />
-          <button onClick={()=>setShowKey(s=>!s)} style={{
-            background:T.bg, border:`1px solid ${T.border}`, color:T.textDim,
-            borderRadius:7, padding:"0 12px", cursor:"pointer", fontSize:12,
-          }}>{showKey?"Hide":"Show"}</button>
+          <button onClick={()=>setShowKey(s=>!s)} style={{background:T.bg,border:`1px solid ${T.border}`,color:T.textDim,borderRadius:7,padding:"0 12px",cursor:"pointer",fontSize:12}}>{showKey?"Hide":"Show"}</button>
         </div>
         <div style={{marginTop:8,color:T.textDim,fontSize:11,lineHeight:1.6}}>
-          Get a free key at <span style={{color:T.gold}}>console.anthropic.com</span> → API Keys. Stored on your device only — never sent anywhere else.
+          Get a free key at <span style={{color:T.gold}}>console.anthropic.com</span> → API Keys. Stored on your device only.
         </div>
       </div>
 
-      {/* Drop zone */}
-      <div
-        onClick={()=>!loading&&inputRef.current.click()}
-        onDragOver={e=>{e.preventDefault();setDragging(true)}}
-        onDragLeave={()=>setDragging(false)}
-        onDrop={handleDrop}
-        style={{
-          border:`1px dashed ${dragging?T.gold:preview?`${T.green}66`:T.border}`,
-          borderRadius:12, cursor:loading?"default":"pointer",
-          background:dragging?`${T.gold}08`:T.surface,
-          transition:"all 0.2s", overflow:"hidden",
-          minHeight:preview?0:140,
-          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-          padding:preview?0:"28px 20px",
-        }}>
+      <div onClick={()=>!loading&&inputRef.current.click()} onDragOver={e=>{e.preventDefault();setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={handleDrop}
+        style={{border:`1px dashed ${dragging?T.gold:preview?`${T.green}66`:T.border}`,borderRadius:12,cursor:loading?"default":"pointer",background:dragging?`${T.gold}08`:T.surface,transition:"all 0.2s",overflow:"hidden",minHeight:preview?0:140,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:preview?0:"28px 20px"}}>
         {preview
           ? <img src={preview} alt="Squad" style={{width:"100%",maxHeight:300,objectFit:"contain",borderRadius:12}}/>
-          : <>
-              <div style={{fontSize:32,marginBottom:10,opacity:0.5}}>📸</div>
-              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:T.textMid,marginBottom:4}}>Tap to choose squad screenshot</div>
-              <div style={{color:T.textDim,fontSize:12}}>PNG or JPG from your camera roll</div>
-            </>
+          : <><div style={{fontSize:32,marginBottom:10,opacity:0.5}}>📸</div><div style={{fontFamily:"'DM Serif Display',serif",fontSize:17,color:T.textMid,marginBottom:4}}>Tap to choose squad screenshot</div><div style={{color:T.textDim,fontSize:12}}>PNG or JPG from your camera roll</div></>
         }
         <input ref={inputRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
       </div>
 
       {preview && !loading && (
         <div style={{display:"flex",gap:8}}>
-          <button onClick={()=>{setFile(null);setPreview(null);setError(null)}} style={{
-            flex:1,background:"transparent",border:`1px solid ${T.border}`,
-            color:T.textDim,padding:"10px",borderRadius:8,cursor:"pointer",
-            fontFamily:"'DM Serif Display',serif",fontSize:13,
-          }}>Change</button>
-          <button onClick={analyse} disabled={!keySet} style={{
-            flex:2,background:keySet?T.gold:"#333",border:"none",
-            color:keySet?"#0c0f1a":T.textDim,
-            padding:"10px",borderRadius:8,cursor:keySet?"pointer":"not-allowed",
-            fontFamily:"'DM Serif Display',serif",fontSize:14,fontWeight:600,letterSpacing:0.5,
-          }}>Analyse Squad →</button>
+          <button onClick={()=>{setFile(null);setPreview(null);setError(null)}} style={{flex:1,background:"transparent",border:`1px solid ${T.border}`,color:T.textDim,padding:"10px",borderRadius:8,cursor:"pointer",fontFamily:"'DM Serif Display',serif",fontSize:13}}>Change</button>
+          <button onClick={analyse} disabled={!keySet} style={{flex:2,background:keySet?T.gold:"#333",border:"none",color:keySet?"#0c0f1a":T.textDim,padding:"10px",borderRadius:8,cursor:keySet?"pointer":"not-allowed",fontFamily:"'DM Serif Display',serif",fontSize:14,fontWeight:600,letterSpacing:0.5}}>Analyse Squad →</button>
         </div>
       )}
-
-      {!preview && (
-        <button onClick={()=>inputRef.current.click()} style={{
-          background:T.gold,border:"none",color:"#0c0f1a",
-          padding:"12px",borderRadius:8,cursor:"pointer",
-          fontFamily:"'DM Serif Display',serif",fontSize:14,fontWeight:600,letterSpacing:0.5,
-        }}>Choose Screenshot →</button>
-      )}
+      {!preview && <button onClick={()=>inputRef.current.click()} style={{background:T.gold,border:"none",color:"#0c0f1a",padding:"12px",borderRadius:8,cursor:"pointer",fontFamily:"'DM Serif Display',serif",fontSize:14,fontWeight:600,letterSpacing:0.5}}>Choose Screenshot →</button>}
 
       {loading && (
         <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:24,textAlign:"center"}}>
           <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:T.textMid,marginBottom:8}}>Analysing squad…</div>
           <div style={{color:T.textDim,fontSize:12,marginBottom:16}}>Reading fixtures, form and FDR data</div>
-          <div style={{height:2,background:T.border,borderRadius:1,overflow:"hidden"}}>
-            <div style={{height:"100%",background:`linear-gradient(90deg,transparent,${T.gold},transparent)`,animation:"shimmer 1.4s infinite",width:"40%"}}/>
-          </div>
+          <div style={{height:2,background:T.border,borderRadius:1,overflow:"hidden"}}><div style={{height:"100%",background:`linear-gradient(90deg,transparent,${T.gold},transparent)`,animation:"shimmer 1.4s infinite",width:"40%"}}/></div>
         </div>
       )}
+      {error && <div style={{background:`${T.red}0d`,border:`1px solid ${T.red}33`,borderRadius:8,padding:"12px 14px",color:T.red,fontSize:12,lineHeight:1.7}}>⚠ {error}</div>}
 
-      {error && (
-        <div style={{background:`${T.red}0d`,border:`1px solid ${T.red}33`,borderRadius:8,padding:"12px 14px",color:T.red,fontSize:12,lineHeight:1.7}}>
-          ⚠ {error}
-        </div>
-      )}
-
-      {/* How it works */}
       <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
         <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>How it works</div>
-        {[
-          ["🔑","Get a free API key at console.anthropic.com → API Keys"],
-          ["📱","Open FPL app → My Team — make sure all 15 players are visible"],
-          ["📸","Take a screenshot of the full pitch view"],
-          ["⚽","Upload it here — AI reads your squad and builds predictions"],
-        ].map(([ic,tx])=>(
-          <div key={tx} style={{display:"flex",gap:10,marginBottom:8}}>
-            <span style={{flexShrink:0,opacity:0.6}}>{ic}</span>
-            <span style={{color:T.textMid,fontSize:12,lineHeight:1.6}}>{tx}</span>
-          </div>
+        {[["🔑","Get a free API key at console.anthropic.com → API Keys"],["📱","Open FPL app → My Team showing all 15 players"],["📸","Screenshot the full pitch view"],["⚽","Upload — AI reads your squad and generates predictions"]].map(([ic,tx])=>(
+          <div key={tx} style={{display:"flex",gap:10,marginBottom:8}}><span style={{flexShrink:0,opacity:0.6}}>{ic}</span><span style={{color:T.textMid,fontSize:12,lineHeight:1.6}}>{tx}</span></div>
         ))}
       </div>
     </div>
@@ -791,7 +831,7 @@ function App() {
       color:T.text,
       paddingBottom:48,
     }}>
-      <div className="safe-top" style={{background:T.bg}}/>
+      <div className="safe-top"/>
 
 
       {/* ── Header ── */}
