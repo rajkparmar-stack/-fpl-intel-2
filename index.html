@@ -645,38 +645,50 @@ function UploadPanel({ onAnalyse }) {
     if(!file)return;
     if(!apiKey.trim()){setError("Enter your Anthropic API key above first.");return;}
     setLoading(true);setError(null);
+    const headers={"Content-Type":"application/json","x-api-key":apiKey.trim(),"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
+    const callAPI=(messages)=>fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers,body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:5000,messages})});
     try {
+      // Step 1: compress image
       const base64=await new Promise((res,rej)=>{ const img=new Image(); const url=URL.createObjectURL(file); img.onload=()=>{ URL.revokeObjectURL(url); const MAX=1200,r=Math.min(MAX/img.width,MAX/img.height,1); const c=document.createElement("canvas"); c.width=Math.round(img.width*r);c.height=Math.round(img.height*r); c.getContext("2d").drawImage(img,0,0,c.width,c.height); res(c.toDataURL("image/jpeg",0.88).split(",")[1]); }; img.onerror=()=>rej(new Error("Could not load image")); img.src=url; });
-      const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey.trim(),"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:4000,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},{type:"text",text:`You are an FPL expert. Analyse this squad screenshot and return ONLY valid JSON — no backticks, no explanation.\nStructure:\n{\n  "current_gw": <number>,\n  "players": [{ "id":"<slug>","web_name":"<n>","pos":<1-4>,"team":"<3-letter>","cost":<float>,"form":<float>,"ppg":<float>,"bench":<bool>,"captain":<bool>,"vice":<bool>,"status":"available|doubtful|injured|out","chance_of_playing":<0-100 or null>,"fixtures":[{"gw":<n>,"opp":"<3-letter>","venue":"H or A","fdr":<1-5>},{"gw":<n+1>,...},{"gw":<n+2>,...}] }],\n  "rotations":{"<gw>":[{"out_id":"<id>","out_name":"<n>","in_id":"<id>","in_name":"<n>","reason":"<why>"}],"<gw+1>":[...],"<gw+2>":[...]},\n  "transfers":[{"priority":"HIGH or MEDIUM","out":"<n>","out_reason":"<why>","in":"<n>","in_team":"<3-letter>","in_cost":<float>,"in_reason":"<why>","proj":[<pts>,<pts>,<pts>]}]\n}\nInclude all 15 players. Use real FPL data for fixtures, form, FDR and injury/availability status. status: available=fit, doubtful=uncertain (add chance_of_playing 0-100), injured=confirmed injury, out=suspended or confirmed miss. Output JSON only.`}]}]})});
-      if(!resp.ok){ const body=await resp.text(); if(resp.status===401)throw new Error("Invalid API key — check it and try again."); throw new Error(`API error ${resp.status}: ${body.slice(0,150)}`); }
-      const rdata=await resp.json();
-      if(rdata.type==="error")throw new Error(rdata.error?.message||"API error");
-      const raw=rdata.content?.find(b=>b.type==="text")?.text||"";
-      // Robust JSON extraction: find outermost { } block
-      const firstBrace=raw.indexOf("{");
-      const lastBrace=raw.lastIndexOf("}");
-      if(firstBrace===-1||lastBrace===-1)throw new Error("No JSON found in response — try uploading again.");
-      let jsonStr=raw.slice(firstBrace,lastBrace+1);
-      // Auto-fix common AI JSON mistakes
-      jsonStr=jsonStr
-        .replace(/,(\s*[}\]])/g,"$1")          // trailing commas
-        .replace(/
-/g," ")                      // newlines inside strings
-        .replace(/[ -]/g," ")         // control chars
-        .replace(/"fixtures":\s*\[\s*\.\.\.\s*\]/g,'"fixtures":[]') // literal ...
-        .replace(/:\s*<[^>]+>/g,':null');        // leftover template placeholders
-      let parsed;
-      try { parsed=JSON.parse(jsonStr); }
-      catch(parseErr) {
-        // Last resort: try to extract just the players array
-        throw new Error("Could not parse squad data. Try screenshotting the full pitch view (all 15 players visible) and uploading again.");
+
+      // Step 2: first API call — analyse squad
+      const PROMPT=`You are an FPL expert. Analyse this squad screenshot and return ONLY a valid JSON object. No markdown, no backticks, no explanation — raw JSON only.
+Required structure:
+{"current_gw":30,"players":[{"id":"pickford","web_name":"Pickford","pos":1,"team":"EVE","cost":5.5,"form":4.8,"ppg":4.2,"bench":false,"captain":false,"vice":false,"status":"available","chance_of_playing":null,"fixtures":[{"gw":30,"opp":"ARS","venue":"A","fdr":5},{"gw":31,"opp":"BHA","venue":"H","fdr":3},{"gw":32,"opp":"WHU","venue":"A","fdr":2}]}],"rotations":{"30":[]},"transfers":[{"priority":"HIGH","out":"PlayerName","out_reason":"reason","in":"PlayerName","in_team":"CLU","in_cost":8.5,"in_reason":"reason","proj":[6.5,7.0,6.8]}]}
+Rules: pos 1=GK 2=DEF 3=MID 4=FWD. Include all 15 players. Use real current FPL fixture data, form, FDR. status: available/doubtful/injured/out. Add chance_of_playing (0-100) only if doubtful. Output raw JSON only, no other text.`;
+
+      const r1=await callAPI([{role:"user",content:[{type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},{type:"text",text:PROMPT}]}]);
+      if(!r1.ok){const b=await r1.text();if(r1.status===401)throw new Error("Invalid API key.");throw new Error("API error "+r1.status+": "+b.slice(0,120));}
+      const d1=await r1.json();
+      if(d1.type==="error")throw new Error(d1.error?.message||"API error");
+      let rawText=d1.content?.find(b=>b.type==="text")?.text||"";
+
+      // Step 3: try to parse — if it fails, send back for cleanup
+      let parsed=null;
+      const tryParse=(s)=>{
+        const a=s.indexOf("{"), b=s.lastIndexOf("}");
+        if(a===-1||b===-1)return null;
+        try{ return JSON.parse(s.slice(a,b+1)); }catch(e){ return null; }
+      };
+      parsed=tryParse(rawText);
+
+      if(!parsed){
+        // Step 4: second call to fix the JSON
+        const r2=await callAPI([
+          {role:"user",content:[{type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},{type:"text",text:PROMPT}]},
+          {role:"assistant",content:rawText},
+          {role:"user",content:"That response had a JSON syntax error. Please return ONLY the corrected valid JSON object, nothing else. Fix any trailing commas, unclosed brackets, or invalid values."}
+        ]);
+        if(!r2.ok)throw new Error("Could not parse squad — please try again.");
+        const d2=await r2.json();
+        rawText=d2.content?.find(b=>b.type==="text")?.text||"";
+        parsed=tryParse(rawText);
       }
-      if(!parsed.players?.length)throw new Error("No players found — make sure all 15 players are visible in the screenshot.");
-      // Ensure every player has required fields with defaults
-      parsed.players=parsed.players.map(p=>({
-        status:"available", chance_of_playing:null, bench:false,
-        captain:false, vice:false, fixtures:[], ...p
-      }));
+
+      if(!parsed)throw new Error("Could not read squad data. Make sure the screenshot shows all 15 players clearly in Pitch view.");
+      if(!parsed.players?.length)throw new Error("No players found. Use the Pitch view in the FPL app showing all 15 players.");
+
+      parsed.players=parsed.players.map(p=>({status:"available",chance_of_playing:null,bench:false,captain:false,vice:false,fixtures:[],...p}));
       onAnalyse(parsed,preview);
     } catch(e){setError(e.message);}
     finally{setLoading(false);}
