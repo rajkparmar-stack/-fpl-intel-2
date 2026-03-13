@@ -765,9 +765,9 @@ function OverviewStrip({ players, rotations, gwList }) {
 
 /* ── App Shell ───────────────────────────────────────────────────────────────── */
 function App() {
-  const [data,    setData]    = useState(PRELOADED);
+  const [data,    setData]    = useState(null);
   const [preview, setPreview] = useState(null);
-  const [tab,     setTab]     = useState("gw0");
+  const [tab,     setTab]     = useState("upload");
   const [budget,  setBudget]  = useState(()=>{ try{return parseFloat(localStorage.getItem('fpl_budget')||'0.5');}catch(e){return 0.5;} });
   const [freeTx,  setFreeTx]  = useState(()=>{ try{return parseInt(localStorage.getItem('fpl_freetx')||'4');}catch(e){return 4;} });
 
@@ -775,13 +775,13 @@ function App() {
   useEffect(()=>{ try{localStorage.setItem('fpl_freetx',freeTx);}catch(e){} },[freeTx]);
 
   const onAnalyse = (parsed, img) => { setData(parsed); setPreview(img); setTab("gw0"); };
-  const gwList    = [data.current_gw, data.current_gw+1, data.current_gw+2];
+  const gwList = data ? [data.current_gw, data.current_gw+1, data.current_gw+2] : [];
 
-  const tabs = [
+  const tabs = data ? [
     ...gwList.map((gw,i)=>[`gw${i}`, `GW ${gw}`]),
     ["transfers","Transfers"],
     ["upload","↑ Upload"],
-  ];
+  ] : [["upload","↑ Upload"]];
 
   return (
     <div className="safe-bottom" style={{
@@ -793,7 +793,6 @@ function App() {
     }}>
       <div className="safe-top"/>
 
-
       {/* ── Header ── */}
       <div style={{
         padding:"28px 24px 20px",
@@ -802,24 +801,18 @@ function App() {
       }}>
         <div>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
-            <div style={{
-              width:8,height:8,borderRadius:"50%",
-              background:`radial-gradient(circle, ${T.gold}, ${T.goldDim})`,
-              boxShadow:`0 0 8px ${T.gold}66`,
-            }}/>
+            <div style={{width:8,height:8,borderRadius:"50%",background:`radial-gradient(circle, ${T.gold}, ${T.goldDim})`,boxShadow:`0 0 8px ${T.gold}66`}}/>
             <span style={{color:T.textDim,fontSize:10,letterSpacing:2,textTransform:"uppercase"}}>Fantasy Premier League</span>
           </div>
-          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:26,letterSpacing:0.5,color:T.text}}>
-            Squad Intelligence
-          </div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:26,letterSpacing:0.5,color:T.text}}>Squad Intelligence</div>
           <div style={{color:T.textDim,fontSize:11,marginTop:2}}>
-            GW{data.current_gw}–{data.current_gw+2} · Raj's Squad
+            {data ? `GW${data.current_gw}–${data.current_gw+2} · Your Squad` : "Upload your squad to get started"}
           </div>
         </div>
-        {preview && (
+        {data && preview && (
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <img src={preview} alt="squad" style={{width:36,height:36,borderRadius:6,objectFit:"cover",border:`1px solid ${T.border}`}}/>
-            <button onClick={()=>{setData(PRELOADED);setPreview(null);setTab("gw0")}} style={{
+            <button onClick={()=>{setData(null);setPreview(null);setTab("upload")}} style={{
               background:"transparent",border:`1px solid ${T.border}`,color:T.textDim,
               padding:"6px 14px",borderRadius:7,cursor:"pointer",
               fontFamily:"'DM Sans',sans-serif",fontSize:12,
@@ -829,8 +822,20 @@ function App() {
       </div>
 
       <div style={{padding:"20px 24px 0",display:"flex",flexDirection:"column",gap:20}}>
-        {/* Overview strip */}
-        <OverviewStrip players={data.players} rotations={data.rotations} gwList={gwList}/>
+
+        {/* Empty state — no squad uploaded yet */}
+        {!data && tab==="upload" && (
+          <div style={{textAlign:"center",padding:"32px 0 8px"}}>
+            <div style={{fontSize:48,marginBottom:16}}>⚽</div>
+            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:T.text,marginBottom:8}}>Welcome to FPL Intel</div>
+            <div style={{color:T.textDim,fontSize:13,lineHeight:1.8,maxWidth:300,margin:"0 auto"}}>
+              Upload a screenshot of your squad to get GW predictions, rotation advice, captain picks and transfer recommendations.
+            </div>
+          </div>
+        )}
+
+        {/* Overview strip — only when squad loaded */}
+        {data && <OverviewStrip players={data.players} rotations={data.rotations} gwList={gwList}/>}
 
         {/* Tab bar */}
         <div style={{display:"flex",gap:2,background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,padding:3,flexWrap:"wrap"}}>
@@ -848,12 +853,12 @@ function App() {
         </div>
 
         {/* Content */}
-        {tab.startsWith("gw") && tab!=="upload" && (()=>{
+        {data && tab.startsWith("gw") && tab!=="upload" && (()=>{
           const idx = parseInt(tab.replace("gw",""));
           return <GWPanel gw={gwList[idx]} players={data.players} rotations={data.rotations}/>;
         })()}
 
-        {tab==="transfers" && (
+        {tab==="transfers" && data && (
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
 
             {/* Controls: budget + free transfers */}
