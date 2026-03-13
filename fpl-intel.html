@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="FPL Intel"/>
+  <meta name="theme-color" content="#0c0f1a"/>
+  <title>FPL Squad Intelligence</title>
+  <!-- PWA icon (inline SVG as data URI so no external files needed) -->
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' fill='%230c0f1a' rx='40'/%3E%3Ccircle cx='90' cy='90' r='50' fill='none' stroke='%23c9a84c' stroke-width='6'/%3E%3Ctext x='90' y='108' font-family='serif' font-size='56' fill='%23c9a84c' text-anchor='middle'%3E⚽%3C/text%3E%3C/svg%3E"/>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230c0f1a' rx='6'/%3E%3Ctext x='16' y='24' font-size='20' text-anchor='middle'%3E⚽%3C/text%3E%3C/svg%3E"/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #0c0f1a; }
+    body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+    #root { min-height: 100%; }
+    /* Safe area for iPhone notch */
+    .safe-top    { padding-top: env(safe-area-inset-top, 0px); }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 20px); }
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: #0c0f1a; }
+    ::-webkit-scrollbar-thumb { background: #1e2540; border-radius: 2px; }
+    @keyframes shimmer { 0%{transform:translateX(-200%)} 100%{transform:translateX(400%)} }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useCallback, useEffect } = React;
+
+/* ── Design tokens ───────────────────────────────────────────────────────────── */
+const T = {
+  bg:       "#0c0f1a",
+  surface:  "#111525",
+  surfaceHi:"#161b2e",
+  border:   "#1e2540",
+  borderHi: "#2a3256",
+  gold:     "#c9a84c",
+  goldDim:  "#8a6e30",
+  goldGlow: "#c9a84c18",
+  text:     "#e8e4d8",
+  textDim:  "#7a7a8a",
+  textMid:  "#a8a4b8",
+  red:      "#e05c5c",
+  redDim:   "#5a2020",
+  green:    "#5cba8a",
+  greenDim: "#1a3d2a",
+  blue:     "#6a9fd8",
+  blueDim:  "#1a2d4a",
+  amber:    "#d4924a",
+};
+
+const POS_COLOR = { 1: T.amber, 2: T.green, 3: T.blue, 4: T.red };
+const POSITIONS = { 1:"GK", 2:"DEF", 3:"MID", 4:"FWD" };
+
+const FDR_PALETTE = {
+  1: { bg:"#1a3d2a", border:"#2d6644", text:"#5cba8a", label:"Easy" },
+  2: { bg:"#1a3528", border:"#2a5a3a", text:"#4aa870", label:"Easy" },
+  3: { bg:"#2d2510", border:"#4a3a18", text:"#c9a84c", label:"Med"  },
+  4: { bg:"#2d1a10", border:"#5a3020", text:"#d4724a", label:"Hard" },
+  5: { bg:"#2d1010", border:"#5a2020", text:"#e05c5c", label:"Tough"},
+};
+
+function fdr(n) { return FDR_PALETTE[n] || FDR_PALETTE[3]; }
+
+function predict(p, gw) {
+  const fix = (p.fixtures||[]).find(f=>f.gw===gw);
+  if (!fix) return 0;
+  const m = [0,1.15,1.07,1.0,0.88,0.72][fix.fdr]||1.0;
+  return Math.round(((p.ppg||4)*0.4+(p.form||4)*0.6)*m*10)/10;
+}
+
+/* ── Pre-loaded GW30 squad (prices from screenshot) ─────────────────────────── */
+const PRELOADED = {
+  current_gw: 30,
+  players: [
+    // GK
+    { id:"pickford",  web_name:"Pickford",    pos:1, team:"EVE", cost:5.5, form:4.8, ppg:4.2, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"ARS",venue:"A",fdr:5},{gw:31,opp:"BHA",venue:"H",fdr:3},{gw:32,opp:"WHU",venue:"A",fdr:2}]},
+    { id:"sanchez",   web_name:"Sánchez",     pos:1, team:"CHE", cost:4.9, form:3.8, ppg:3.5, bench:true,  captain:false, vice:false, fixtures:[{gw:30,opp:"NEW",venue:"H",fdr:3},{gw:31,opp:"BUR",venue:"A",fdr:2},{gw:32,opp:"MCI",venue:"H",fdr:4}]},
+    // DEF
+    { id:"virgil",    web_name:"Virgil",      pos:2, team:"LIV", cost:6.1, form:6.1, ppg:5.8, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"TOT",venue:"H",fdr:2},{gw:31,opp:"LEI",venue:"A",fdr:1},{gw:32,opp:"EVE",venue:"H",fdr:1}]},
+    { id:"timber",    web_name:"J.Timber",    pos:2, team:"ARS", cost:6.2, form:5.9, ppg:5.4, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"EVE",venue:"H",fdr:2},{gw:31,opp:"BRE",venue:"A",fdr:3},{gw:32,opp:"CRY",venue:"H",fdr:2}]},
+    { id:"gabriel",   web_name:"Gabriel",     pos:2, team:"ARS", cost:6.9, form:5.7, ppg:5.5, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"EVE",venue:"H",fdr:2},{gw:31,opp:"BRE",venue:"A",fdr:3},{gw:32,opp:"CRY",venue:"H",fdr:2}]},
+    { id:"alderete",  web_name:"Alderete",    pos:2, team:"SOU", cost:4.1, form:3.5, ppg:3.2, bench:true,  captain:false, vice:false, fixtures:[{gw:30,opp:"BHA",venue:"H",fdr:4},{gw:31,opp:"ARS",venue:"A",fdr:5},{gw:32,opp:"LEI",venue:"H",fdr:2}]},
+    { id:"hill",      web_name:"Hill",        pos:2, team:"BOU", cost:4.1, form:4.1, ppg:3.9, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"BUR",venue:"A",fdr:2},{gw:31,opp:"WOL",venue:"H",fdr:2},{gw:32,opp:"MUN",venue:"A",fdr:3}]},
+    // MID
+    { id:"palmer",    web_name:"Palmer",      pos:3, team:"CHE", cost:10.6,form:7.6, ppg:7.4, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"NEW",venue:"H",fdr:3},{gw:31,opp:"BUR",venue:"A",fdr:2},{gw:32,opp:"MCI",venue:"H",fdr:4}]},
+    { id:"mbeumo",    web_name:"Mbeumo",      pos:3, team:"BRE", cost:8.6, form:7.2, ppg:6.8, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"AVL",venue:"H",fdr:3},{gw:31,opp:"ARS",venue:"H",fdr:4},{gw:32,opp:"NEW",venue:"A",fdr:3}]},
+    { id:"foden",     web_name:"Foden",       pos:3, team:"MCI", cost:8.1, form:4.9, ppg:6.1, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"WHU",venue:"A",fdr:2},{gw:31,opp:"NEW",venue:"H",fdr:3},{gw:32,opp:"CHE",venue:"A",fdr:3}]},
+    { id:"sarr",      web_name:"P.M.Sarr",    pos:3, team:"TOT", cost:4.5, form:5.3, ppg:5.0, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"LIV",venue:"A",fdr:5},{gw:31,opp:"CRY",venue:"H",fdr:2},{gw:32,opp:"AVL",venue:"A",fdr:3}]},
+    { id:"garner",    web_name:"Garner",      pos:3, team:"EVE", cost:5.2, form:3.9, ppg:3.6, bench:true,  captain:false, vice:false, fixtures:[{gw:30,opp:"ARS",venue:"A",fdr:5},{gw:31,opp:"BHA",venue:"H",fdr:3},{gw:32,opp:"WHU",venue:"A",fdr:2}]},
+    // FWD
+    { id:"joaopedro", web_name:"João Pedro",  pos:4, team:"CHE", cost:7.6, form:6.8, ppg:5.9, bench:false, captain:true,  vice:false, fixtures:[{gw:30,opp:"NEW",venue:"H",fdr:3},{gw:31,opp:"BUR",venue:"A",fdr:2},{gw:32,opp:"MCI",venue:"H",fdr:4}]},
+    { id:"watkins",   web_name:"Watkins",     pos:4, team:"AVL", cost:8.5, form:6.4, ppg:6.2, bench:false, captain:false, vice:true,  fixtures:[{gw:30,opp:"MUN",venue:"A",fdr:4},{gw:31,opp:"BRE",venue:"A",fdr:3},{gw:32,opp:"TOT",venue:"H",fdr:2}]},
+    { id:"calvert",   web_name:"Calvert-Lew.",pos:4, team:"LEI", cost:5.7, form:4.2, ppg:4.0, bench:false, captain:false, vice:false, fixtures:[{gw:30,opp:"CRY",venue:"A",fdr:3},{gw:31,opp:"LIV",venue:"H",fdr:5},{gw:32,opp:"MUN",venue:"A",fdr:3}]},
+  ],
+  rotations: {
+    30: [
+      { out_id:"pickford", out_name:"Pickford", in_id:"sanchez", in_name:"Sánchez", reason:"Sánchez (CHE vs NEW H, FDR 3) is a clear upgrade. Pickford faces Arsenal away — FDR 5, near-zero clean sheet chance." },
+      { out_id:"sarr",     out_name:"P.M.Sarr", in_id:"garner",  in_name:"Garner",  reason:"Sarr vs Liverpool away (FDR 5) is one of the worst midfield fixtures possible. Bench Garner as cover." },
+    ],
+    31: [
+      { out_id:"calvert",  out_name:"Calvert-Lew.", in_id:"alderete", in_name:"Alderete", reason:"Calvert-Lewin vs Liverpool (H) is FDR 5 — near-certain blank. Move him to bench this week." },
+    ],
+    32: [],
+  },
+  // Budget: £0.5m · Calvert-Lew. sells for £5.7m → max spend on FWD = £6.2m
+  // P.M.Sarr sells for £4.5m → max spend on MID = £5.0m
+  // Isak £8.8m is NOT affordable (need £2.6m more)
+  transfers: [
+    // ── AFFORDABLE ────────────────────────────────────────────────────────────
+    {
+      priority:"HIGH",
+      out:"Calvert-Lew.", out_reason:"GW31 vs LIV (H) FDR 5 — almost certain blank. Form 4.2. Deadweight in your XI for the next two gameweeks.",
+      in:"Solanke", in_team:"BOU", in_cost:6.1,
+      in_reason:"Best affordable FWD at £6.1m. BOU vs WOL (H, FDR 2) GW31 · vs MUN (A) GW32. In form — 3 goals in last 5. Reliable volume scorer.",
+      proj:[5.8,6.4,5.2],
+    },
+    {
+      priority:"HIGH",
+      out:"Calvert-Lew.", out_reason:"GW31 vs LIV (H) FDR 5. No attacking return expected. Poor form and underlying stats.",
+      in:"Welbeck", in_team:"BHA", in_cost:5.5,
+      in_reason:"£5.5m — saves £0.2m extra. BHA vs SOU (H, FDR 1) GW31 — one of the easiest fixtures this gameweek. 2 goals in last 4. Good budget option.",
+      proj:[5.2,6.1,4.8],
+    },
+    {
+      priority:"MEDIUM",
+      out:"P.M.Sarr", out_reason:"GW30 vs LIV (A) FDR 5. Inconsistent returns and a £4.5m price tag with low ceiling.",
+      in:"Nkunku", in_team:"CHE", in_cost:4.9,
+      in_reason:"£4.9m — within budget. CHE vs NEW (H) GW30 · vs BUR (A) GW31. Coming into form, good underlying stats for the price.",
+      proj:[4.8,5.4,4.2],
+    },
+    {
+      priority:"MEDIUM",
+      out:"Pickford", out_reason:"Facing ARS (A) GW30 — FDR 5. EVE's long-term schedule makes clean sheets unlikely.",
+      in:"Flekken", in_team:"BRE", in_cost:4.6,
+      in_reason:"£4.6m — just within budget. BRE vs AVL (H) GW30. Brentford kept 4 clean sheets in last 6 home games. Save bonus potential.",
+      proj:[5.2,4.1,4.8],
+    },
+    // ── OUT OF BUDGET (shown locked) ─────────────────────────────────────────
+    {
+      priority:"HIGH",
+      out:"Calvert-Lew.", out_reason:"GW31 vs LIV (H) FDR 5. Worst forward fixture this week. Must sell.",
+      in:"Isak", in_team:"NEW", in_cost:8.8,
+      in_reason:"Best FWD in FPL. 10 goals, league-leading xG. GW30 vs CHE · GW31 vs MCI · GW32 vs BRE — excellent run. Needs £2.6m more than budget allows.",
+      proj:[6.9,7.2,7.8],
+    },
+    {
+      priority:"HIGH",
+      out:"P.M.Sarr", out_reason:"GW30 vs LIV (A) FDR 5. Too inconsistent for his price.",
+      in:"Salah", in_team:"LIV", in_cost:13.0,
+      in_reason:"12G + 8A. Best FPL asset overall. GW31 vs LEI · GW32 vs EVE — both easy. Needs £8.5m more than budget allows.",
+      proj:[9.8,10.2,9.5],
+    },
+  ],
+};
+
+/* ── Atoms ───────────────────────────────────────────────────────────────────── */
+function Divider() {
+  return <div style={{height:1, background:`linear-gradient(90deg, transparent, ${T.border}, transparent)`, margin:"4px 0"}} />;
+}
+
+function FixturePill({ f }) {
+  if (!f) return null;
+  const d = fdr(f.fdr);
+  return (
+    <div style={{
+      background:d.bg, border:`1px solid ${d.border}`,
+      borderRadius:5, padding:"3px 8px", textAlign:"center", minWidth:44, flexShrink:0,
+    }}>
+      <div style={{color:T.text, fontSize:11, fontWeight:600, letterSpacing:0.3}}>{f.opp}</div>
+      <div style={{color:d.text, fontSize:9, letterSpacing:0.8, marginTop:1}}>{f.venue} · {d.label}</div>
+    </div>
+  );
+}
+
+function ScoreBadge({ val, size="sm" }) {
+  const isGold  = val >= 7;
+  const isGreen = val >= 5.5;
+  const color   = isGold ? T.gold : isGreen ? T.green : T.textDim;
+  const bg      = isGold ? T.goldGlow : isGreen ? `${T.green}12` : `${T.border}60`;
+  const sz      = size === "lg" ? 44 : 34;
+  return (
+    <div style={{
+      width:sz, height:sz, borderRadius:size==="lg"?10:7, flexShrink:0,
+      background:bg, border:`1px solid ${color}33`,
+      display:"flex", alignItems:"center", justifyContent:"center",
+    }}>
+      <span style={{
+        fontFamily:"'DM Serif Display', serif",
+        fontSize: size==="lg"?20:14, fontWeight:400, color, lineHeight:1,
+      }}>{val}</span>
+    </div>
+  );
+}
+
+function Badge({ label, color = T.gold }) {
+  return (
+    <span style={{
+      background:`${color}20`, border:`1px solid ${color}55`,
+      color, fontSize:9, fontWeight:700, padding:"2px 6px",
+      borderRadius:3, letterSpacing:1, textTransform:"uppercase",
+    }}>{label}</span>
+  );
+}
+
+/* ── Player Row ──────────────────────────────────────────────────────────────── */
+function PlayerRow({ p, gw, swapRole }) {
+  const pred   = predict(p, gw);
+  const fix    = (p.fixtures||[]).find(f=>f.gw===gw);
+  const pc     = POS_COLOR[p.pos]||T.textDim;
+  const isIn   = swapRole==="in";
+  const isOut  = swapRole==="out";
+  const isBench= p.bench && !isIn && !isOut;
+
+  return (
+    <div style={{
+      display:"flex", alignItems:"center", gap:10, padding:"10px 14px",
+      background: isIn  ? `${T.green}0d`
+                : isOut ? `${T.red}0a`
+                : isBench ? "transparent"
+                : T.surface,
+      borderRadius:8,
+      border:`1px solid ${isIn?`${T.green}44`:isOut?`${T.red}33`:isBench?"transparent":T.border}`,
+      opacity: isBench ? 0.55 : 1,
+      transition:"opacity 0.2s",
+    }}>
+      {/* Position chip */}
+      <div style={{
+        width:30, height:30, borderRadius:6, flexShrink:0,
+        background:`${pc}15`, border:`1px solid ${pc}40`,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        color:pc, fontSize:10, fontWeight:700, letterSpacing:0.5,
+      }}>{POSITIONS[p.pos]}</div>
+
+      {/* Name */}
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{display:"flex", alignItems:"center", gap:6, flexWrap:"wrap"}}>
+          <span style={{
+            fontFamily:"'DM Serif Display', serif",
+            fontSize:15, color:T.text, letterSpacing:0.2,
+          }}>{p.web_name}</span>
+          {p.captain && <Badge label="C" color={T.gold}/>}
+          {p.vice    && <Badge label="V" color={T.blue}/>}
+          {isIn      && <Badge label="▲ In" color={T.green}/>}
+          {isOut     && <Badge label="▼ Out" color={T.red}/>}
+          {isBench   && <Badge label="Bench" color={T.textDim}/>}
+        </div>
+        <div style={{color:T.textDim, fontSize:10, marginTop:2, letterSpacing:0.3}}>
+          {p.team} · £{p.cost}m
+        </div>
+      </div>
+
+      {/* Fixture */}
+      {fix && <FixturePill f={fix}/>}
+
+      {/* Predicted pts */}
+      <ScoreBadge val={pred}/>
+    </div>
+  );
+}
+
+/* ── GW Panel ────────────────────────────────────────────────────────────────── */
+function buildSquad(players, rotations, gw) {
+  const squad = players.map(p=>({...p}));
+  (rotations[gw]||[]).forEach(sw=>{
+    const out = squad.find(p=>p.id===sw.out_id);
+    const inn = squad.find(p=>p.id===sw.in_id);
+    if(out) out.bench=true;
+    if(inn) inn.bench=false;
+  });
+  return squad;
+}
+
+function GWPanel({ gw, players, rotations }) {
+  const squad    = buildSquad(players, rotations, gw);
+  const starters = squad.filter(p=>!p.bench);
+  const bench    = squad.filter(p=>p.bench);
+  const captain  = starters.find(p=>p.captain);
+  const base     = starters.reduce((s,p)=>s+predict(p,gw),0);
+  const capBonus = captain?predict(captain,gw):0;
+  const total    = (base+capBonus).toFixed(1);
+  const rots     = rotations[gw]||[];
+
+  const swapMap  = {};
+  rots.forEach(sw=>{ swapMap[sw.out_id]="out"; swapMap[sw.in_id]="in"; });
+
+  // Captain/VC: rank starters by predicted pts for this GW
+  const ranked   = [...starters].sort((a,b)=>predict(b,gw)-predict(a,gw));
+  const capPick  = ranked[0];
+  const vcPick   = ranked[1];
+  const capPts   = capPick  ? predict(capPick,  gw) : 0;
+  const vcPts    = vcPick   ? predict(vcPick,   gw) : 0;
+  const capFix   = capPick  ? (capPick.fixtures||[]).find(f=>f.gw===gw)  : null;
+  const vcFix    = vcPick   ? (vcPick.fixtures||[]).find(f=>f.gw===gw)   : null;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:20}}>
+
+      {/* Score summary */}
+      <div style={{
+        display:"flex", gap:12, flexWrap:"wrap",
+        background:T.surface, border:`1px solid ${T.border}`,
+        borderRadius:12, padding:"18px 20px",
+      }}>
+        <div style={{flex:1, minWidth:100}}>
+          <div style={{color:T.textDim, fontSize:10, letterSpacing:1.5, textTransform:"uppercase", marginBottom:6}}>Predicted Total</div>
+          <div style={{
+            fontFamily:"'DM Serif Display', serif",
+            fontSize:48, color: parseFloat(total)>=65?T.gold:parseFloat(total)>=50?T.green:T.text,
+            lineHeight:1, letterSpacing:-1,
+          }}>{total}</div>
+          <div style={{color:T.textDim, fontSize:11, marginTop:4}}>points incl. captain ×2</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,flex:2,minWidth:200,justifyContent:"center"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:T.bg,borderRadius:7,border:`1px solid ${T.border}`}}>
+            <span style={{color:T.textDim,fontSize:11}}>Starting XI base</span>
+            <span style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:T.text}}>{base.toFixed(1)}</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:`${T.goldGlow}`,borderRadius:7,border:`1px solid ${T.goldDim}44`}}>
+            <span style={{color:T.goldDim,fontSize:11}}>Captain bonus · {captain?.web_name}</span>
+            <span style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:T.gold}}>+{capBonus.toFixed(1)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Captain / VC picks */}
+      {capPick && (
+        <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+          <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8}}>
+            <span style={{color:T.gold,fontSize:10,letterSpacing:1.5,textTransform:"uppercase"}}>Armband Picks</span>
+            <div style={{flex:1,height:1,background:T.border}}/>
+          </div>
+          <div style={{display:"flex",gap:0}}>
+            {/* Captain */}
+            <div style={{flex:1,padding:"16px 18px",borderRight:`1px solid ${T.border}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+                <div style={{
+                  width:22,height:22,borderRadius:4,
+                  background:T.gold,display:"flex",alignItems:"center",justifyContent:"center",
+                  color:"#0c0f1a",fontSize:10,fontWeight:800,
+                }}>C</div>
+                <span style={{color:T.goldDim,fontSize:10,letterSpacing:1.2,textTransform:"uppercase"}}>Captain</span>
+              </div>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:T.text,marginBottom:2}}>{capPick.web_name}</div>
+              <div style={{color:T.textDim,fontSize:11,marginBottom:10}}>{capPick.team} · £{capPick.cost}m</div>
+              {capFix && <FixturePill f={capFix}/>}
+              <div style={{marginTop:12,display:"flex",alignItems:"baseline",gap:6}}>
+                <span style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:T.gold,lineHeight:1}}>{(capPts*2).toFixed(1)}</span>
+                <span style={{color:T.goldDim,fontSize:11}}>projected 2× pts</span>
+              </div>
+              <div style={{marginTop:8,color:T.textDim,fontSize:11,lineHeight:1.7}}>
+                Best predicted score this GW ({capPts} base). {capFix ? `${fdr(capFix.fdr).label} fixture vs ${capFix.opp} (${capFix.venue}).` : ""} High-ceiling option.
+              </div>
+            </div>
+            {/* Vice Captain */}
+            {vcPick && (
+              <div style={{flex:1,padding:"16px 18px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+                  <div style={{
+                    width:22,height:22,borderRadius:4,
+                    background:T.blue,display:"flex",alignItems:"center",justifyContent:"center",
+                    color:"#0c0f1a",fontSize:10,fontWeight:800,
+                  }}>V</div>
+                  <span style={{color:`${T.blue}99`,fontSize:10,letterSpacing:1.2,textTransform:"uppercase"}}>Vice Captain</span>
+                </div>
+                <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:T.text,marginBottom:2}}>{vcPick.web_name}</div>
+                <div style={{color:T.textDim,fontSize:11,marginBottom:10}}>{vcPick.team} · £{vcPick.cost}m</div>
+                {vcFix && <FixturePill f={vcFix}/>}
+                <div style={{marginTop:12,display:"flex",alignItems:"baseline",gap:6}}>
+                  <span style={{fontFamily:"'DM Serif Display',serif",fontSize:28,color:T.blue,lineHeight:1}}>{(vcPts*2).toFixed(1)}</span>
+                  <span style={{color:`${T.blue}88`,fontSize:11}}>projected 2× pts</span>
+                </div>
+                <div style={{marginTop:8,color:T.textDim,fontSize:11,lineHeight:1.7}}>
+                  Second-best option. {vcFix ? `${fdr(vcFix.fdr).label} fixture vs ${vcFix.opp} (${vcFix.venue}).` : ""} Solid backup if captain blanks.
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Rotation advice */}
+      {rots.length > 0 && (
+        <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+          <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8}}>
+            <span style={{color:T.gold,fontSize:10,letterSpacing:1.5,textTransform:"uppercase"}}>Rotation Advice</span>
+            <div style={{flex:1,height:1,background:T.border}}/>
+          </div>
+          <div style={{padding:"12px 16px",display:"flex",flexDirection:"column",gap:10}}>
+            {rots.map((sw,i)=>(
+              <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                <div style={{
+                  display:"flex",alignItems:"center",gap:6,flexShrink:0,
+                  padding:"6px 10px",background:T.bg,borderRadius:7,border:`1px solid ${T.border}`,
+                  fontFamily:"'DM Serif Display',serif",fontSize:13,
+                }}>
+                  <span style={{color:T.red}}>{sw.out_name}</span>
+                  <span style={{color:T.textDim,fontSize:10}}>→</span>
+                  <span style={{color:T.green}}>{sw.in_name}</span>
+                </div>
+                <p style={{color:T.textMid,fontSize:11,lineHeight:1.7,margin:0,paddingTop:6}}>{sw.reason}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {rots.length === 0 && (
+        <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 16px",color:T.textMid,fontSize:12}}>
+          ✓ Starting lineup is optimal for this gameweek — no rotations needed.
+        </div>
+      )}
+
+      {/* Players */}
+      <div>
+        {[1,2,3,4].map(pos=>{
+          const g = starters.filter(p=>p.pos===pos);
+          if (!g.length) return null;
+          return (
+            <div key={pos} style={{marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <span style={{color:POS_COLOR[pos],fontSize:9,letterSpacing:2,textTransform:"uppercase",fontWeight:700}}>{POSITIONS[pos]}s</span>
+                <div style={{flex:1,height:1,background:`${POS_COLOR[pos]}22`}}/>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                {g.map(p=><PlayerRow key={p.id} p={p} gw={gw} swapRole={swapMap[p.id]}/>)}
+              </div>
+            </div>
+          );
+        })}
+        <Divider/>
+        <div style={{marginTop:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <span style={{color:T.textDim,fontSize:9,letterSpacing:2,textTransform:"uppercase"}}>Bench</span>
+            <div style={{flex:1,height:1,background:T.border}}/>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}>
+            {bench.map(p=><PlayerRow key={p.id} p={p} gw={gw} swapRole={swapMap[p.id]}/>)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Transfers Panel ─────────────────────────────────────────────────────────── */
+function TransferCard({ t, idx, netCost, budget, shortfall, locked, recommended, isFree }) {
+  const isHigh = t.priority==="HIGH";
+  const total  = (t.proj||[]).reduce((a,b)=>a+b,0).toFixed(1);
+  const netNum = parseFloat(netCost||0);
+  return (
+    <div style={{
+      background:T.surface,
+      border:`1px solid ${recommended ? `${T.gold}66` : locked ? `${T.red}33` : T.border}`,
+      borderRadius:12, overflow:"hidden", opacity:locked?0.55:1,
+      boxShadow: recommended ? `0 0 0 1px ${T.gold}22` : "none",
+    }}>
+      <div style={{
+        display:"flex",alignItems:"center",justifyContent:"space-between",
+        padding:"10px 16px", borderBottom:`1px solid ${T.border}`,
+        background: recommended ? `${T.gold}0c` : locked ? `${T.red}08` : isHigh ? `${T.red}0a` : `${T.amber}08`,
+      }}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {recommended && <Badge label="✦ Recommended" color={T.gold}/>}
+          {!recommended && <span style={{fontFamily:"'DM Serif Display',serif",fontSize:13,color:T.textMid}}>Transfer {idx+1}</span>}
+          {locked && <Badge label={`Need £${shortfall}m more`} color={T.red}/>}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          {!locked && recommended && isFree  && <Badge label="Free transfer" color={T.green}/>}
+          {!locked && recommended && !isFree && <Badge label="−4pt hit" color={T.red}/>}
+          {!locked && !recommended && netNum > 0  && <Badge label={`Net £${netCost}m`} color={T.textDim}/>}
+          {!locked && !recommended && netNum <= 0 && <Badge label="Free swap" color={T.green}/>}
+          <Badge label={t.priority} color={isHigh?T.red:T.amber}/>
+        </div>
+      </div>
+
+      <div style={{padding:"14px 16px",display:"flex",gap:14,flexWrap:"wrap"}}>
+        {/* OUT */}
+        <div style={{flex:1,minWidth:130}}>
+          <div style={{color:T.red,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>Sell</div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:T.text,marginBottom:4}}>{t.out}</div>
+          <p style={{color:T.textDim,fontSize:11,lineHeight:1.7,margin:0}}>{t.out_reason}</p>
+        </div>
+
+        {/* Arrow */}
+        <div style={{display:"flex",alignItems:"center",color:T.border,fontSize:20,paddingTop:20}}>→</div>
+
+        {/* IN */}
+        <div style={{flex:1,minWidth:160}}>
+          <div style={{color:T.green,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>Buy</div>
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:4}}>
+            <span style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:T.text}}>{t.in}</span>
+            <span style={{color:T.textDim,fontSize:11}}>{t.in_team} · £{t.in_cost}m</span>
+          </div>
+          <p style={{color:T.textDim,fontSize:11,lineHeight:1.7,margin:0,marginBottom:12}}>{t.in_reason}</p>
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+            {(t.proj||[]).map((v,i)=>(
+              <div key={i} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:6,padding:"5px 10px",textAlign:"center"}}>
+                <div style={{fontFamily:"'DM Serif Display',serif",fontSize:16,color:locked?T.textDim:T.green}}>{v}</div>
+                <div style={{color:T.textDim,fontSize:9,letterSpacing:0.5}}>GW+{i}</div>
+              </div>
+            ))}
+            <div style={{background:locked?T.bg:T.goldGlow,border:`1px solid ${locked?T.border:`${T.goldDim}55`}`,borderRadius:6,padding:"5px 12px",textAlign:"center",marginLeft:2}}>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:locked?T.textDim:T.gold}}>{total}</div>
+              <div style={{color:T.goldDim,fontSize:9,letterSpacing:0.5}}>Total</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Upload Panel ────────────────────────────────────────────────────────────── */
+function UploadPanel({ onAnalyse }) {
+  const [dragging, setDragging] = useState(false);
+  const [file,     setFile]     = useState(null);
+  const [preview,  setPreview]  = useState(null);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState(null);
+  const inputRef = useRef();
+
+  const handleFile = f => {
+    if (!f||!f.type.startsWith("image/")) { setError("Please upload a PNG or JPG image."); return; }
+    setFile(f); setError(null);
+    const r = new FileReader();
+    r.onload = e => setPreview(e.target.result);
+    r.readAsDataURL(f);
+  };
+
+  const handleDrop = useCallback(e => {
+    e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]);
+  }, []);
+
+  const analyse = async () => {
+    if (!file) return;
+    setLoading(true); setError(null);
+    try {
+      const base64 = await new Promise((res,rej)=>{
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          const MAX=1200, r=Math.min(MAX/img.width,MAX/img.height,1);
+          const c=document.createElement("canvas");
+          c.width=Math.round(img.width*r); c.height=Math.round(img.height*r);
+          c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+          res(c.toDataURL("image/jpeg",0.88).split(",")[1]);
+        };
+        img.onerror=()=>rej(new Error("Could not load image"));
+        img.src=url;
+      });
+
+      const resp = await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-6", max_tokens:4000,
+          messages:[{role:"user",content:[
+            {type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},
+            {type:"text",text:`You are an FPL expert. Analyse this squad screenshot and return ONLY valid JSON — no backticks, no explanation.
+Structure:
+{
+  "current_gw": <number>,
+  "players": [{ "id":"<slug>","web_name":"<name>","pos":<1-4>,"team":"<3-letter>","cost":<float>,"form":<float>,"ppg":<float>,"bench":<bool>,"captain":<bool>,"vice":<bool>,"fixtures":[{"gw":<n>,"opp":"<3-letter>","venue":"H or A","fdr":<1-5>},{"gw":<n+1>,...},{"gw":<n+2>,...}] }],
+  "rotations":{"<gw>":[{"out_id":"<id>","out_name":"<n>","in_id":"<id>","in_name":"<n>","reason":"<why>"}],"<gw+1>":[...],"<gw+2>":[...]},
+  "transfers":[{"priority":"HIGH or MEDIUM","out":"<n>","out_reason":"<why>","in":"<n>","in_team":"<3-letter>","in_cost":<float>,"in_reason":"<why>","proj":[<pts>,<pts>,<pts>]}]
+}
+Include all 15 players. Use real FPL season data for fixtures, form, FDR. Output JSON only.`}
+          ]}]
+        })
+      });
+
+      if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+      const data = await resp.json();
+      if (data.type==="error") throw new Error(data.error?.message||"API error");
+      const raw  = data.content?.find(b=>b.type==="text")?.text||"";
+      const match= raw.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("No JSON in response");
+      const parsed = JSON.parse(match[0]);
+      if (!parsed.players?.length) throw new Error("No players found");
+      onAnalyse(parsed, preview);
+    } catch(e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Drop zone */}
+      <div
+        onClick={()=>!loading&&inputRef.current.click()}
+        onDragOver={e=>{e.preventDefault();setDragging(true)}}
+        onDragLeave={()=>setDragging(false)}
+        onDrop={handleDrop}
+        style={{
+          border:`1px dashed ${dragging?T.gold:preview?`${T.green}66`:T.border}`,
+          borderRadius:12, cursor:loading?"default":"pointer",
+          background:dragging?`${T.gold}08`:T.surface,
+          transition:"all 0.2s", overflow:"hidden",
+          minHeight: preview?0:160,
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+          padding: preview?0:"32px 20px",
+        }}>
+        {preview
+          ? <img src={preview} alt="Squad" style={{width:"100%",maxHeight:320,objectFit:"contain",borderRadius:12}}/>
+          : <>
+              <div style={{fontSize:36,marginBottom:12,opacity:0.5}}>📸</div>
+              <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:T.textMid,marginBottom:4}}>Drop your squad screenshot</div>
+              <div style={{color:T.textDim,fontSize:12}}>or click to browse · PNG / JPG</div>
+            </>
+        }
+        <input ref={inputRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
+      </div>
+
+      {preview && !loading && (
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>{setFile(null);setPreview(null);setError(null)}} style={{
+            flex:1,background:"transparent",border:`1px solid ${T.border}`,
+            color:T.textDim,padding:"10px",borderRadius:8,cursor:"pointer",
+            fontFamily:"'DM Serif Display',serif",fontSize:13,
+          }}>Change</button>
+          <button onClick={analyse} style={{
+            flex:2,background:T.gold,border:"none",color:"#0c0f1a",
+            padding:"10px",borderRadius:8,cursor:"pointer",
+            fontFamily:"'DM Serif Display',serif",fontSize:14,fontWeight:600,letterSpacing:0.5,
+          }}>Analyse Squad →</button>
+        </div>
+      )}
+
+      {!preview && (
+        <button onClick={()=>inputRef.current.click()} style={{
+          background:T.gold,border:"none",color:"#0c0f1a",
+          padding:"12px",borderRadius:8,cursor:"pointer",
+          fontFamily:"'DM Serif Display',serif",fontSize:14,fontWeight:600,letterSpacing:0.5,
+        }}>Choose Screenshot →</button>
+      )}
+
+      {loading && (
+        <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:24,textAlign:"center"}}>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:T.textMid,marginBottom:8}}>Analysing squad…</div>
+          <div style={{color:T.textDim,fontSize:12,marginBottom:16}}>Reading fixtures, form and FDR data</div>
+          <div style={{height:2,background:T.border,borderRadius:1,overflow:"hidden"}}>
+            <div style={{height:"100%",background:`linear-gradient(90deg,transparent,${T.gold},transparent)`,animation:"shimmer 1.4s infinite",width:"40%"}}/>
+          </div>
+          <style>{`@keyframes shimmer{0%{transform:translateX(-200%)}100%{transform:translateX(400%)}}`}</style>
+        </div>
+      )}
+
+      {error && (
+        <div style={{background:`${T.red}0d`,border:`1px solid ${T.red}33`,borderRadius:8,padding:"12px 14px",color:T.red,fontSize:12,lineHeight:1.6}}>
+          ⚠ {error}
+        </div>
+      )}
+
+      {/* Instructions */}
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:18}}>
+        <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:12}}>How it works</div>
+        {[["📱","Open FPL app → Pick Team screen"],["📸","Screenshot showing all 15 players"],["⬆️","Upload above — AI reads your squad"],["⚽","Predictions + rotations generated for 3 GWs"]].map(([ic,tx])=>(
+          <div key={tx} style={{display:"flex",gap:10,marginBottom:8}}>
+            <span style={{flexShrink:0,opacity:0.6}}>{ic}</span>
+            <span style={{color:T.textMid,fontSize:12,lineHeight:1.6}}>{tx}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Overview Cards ──────────────────────────────────────────────────────────── */
+function OverviewStrip({ players, rotations, gwList }) {
+  return (
+    <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+      {gwList.map((gw,i)=>{
+        const squad   = buildSquad(players,rotations,gw);
+        const starters= squad.filter(p=>!p.bench);
+        const captain = starters.find(p=>p.captain);
+        const base    = starters.reduce((s,p)=>s+predict(p,gw),0);
+        const capB    = captain?predict(captain,gw):0;
+        const total   = (base+capB).toFixed(1);
+        const rots    = (rotations[gw]||[]).length;
+        const colors  = [T.gold,T.text,T.textMid];
+        return (
+          <div key={gw} style={{
+            flex:1,minWidth:90,
+            background:T.surface,border:`1px solid ${i===0?T.goldDim:T.border}`,
+            borderRadius:10,padding:"14px 16px",
+          }}>
+            <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:2}}>
+              {["This GW","Next GW","+2 GWs"][i]}
+            </div>
+            <div style={{color:T.textDim,fontSize:10,marginBottom:8}}>GW{gw}</div>
+            <div style={{
+              fontFamily:"'DM Serif Display',serif",
+              fontSize:34,lineHeight:1,color:colors[i],marginBottom:4,
+            }}>{total}</div>
+            <div style={{color:T.textDim,fontSize:10,marginBottom:8}}>pts predicted</div>
+            {rots>0
+              ? <div style={{background:`${T.green}14`,border:`1px solid ${T.green}33`,borderRadius:4,padding:"2px 8px",display:"inline-block",color:T.green,fontSize:10}}>{rots} swap{rots>1?"s":""}</div>
+              : <div style={{color:T.textDim,fontSize:10}}>No swaps</div>
+            }
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── App Shell ───────────────────────────────────────────────────────────────── */
+function App() {
+  const [data,    setData]    = useState(PRELOADED);
+  const [preview, setPreview] = useState(null);
+  const [tab,     setTab]     = useState("gw0");
+  const [budget,  setBudget]  = useState(()=>{ try { return parseFloat(localStorage.getItem("fpl_budget")||"0.5"); } catch(e){ return 0.5; }});
+  const [freeTx,  setFreeTx]  = useState(()=>{ try { return parseInt(localStorage.getItem("fpl_freetx")||"4"); } catch(e){ return 4; }});
+
+  // Persist settings
+  useEffect(()=>{ try { localStorage.setItem("fpl_budget", budget); } catch(e){} }, [budget]);
+  useEffect(()=>{ try { localStorage.setItem("fpl_freetx", freeTx); } catch(e){} }, [freeTx]);
+
+  const onAnalyse = (parsed, img) => { setData(parsed); setPreview(img); setTab("gw0"); };
+  const gwList    = [data.current_gw, data.current_gw+1, data.current_gw+2];
+
+  const tabs = [
+    ...gwList.map((gw,i)=>[`gw${i}`, `GW ${gw}`]),
+    ["transfers","Transfers"],
+    ["upload","↑ Upload"],
+  ];
+
+  return (
+    <div className="safe-bottom" style={{
+      minHeight:"100vh",
+      background:`radial-gradient(ellipse at 20% 0%, #131828 0%, ${T.bg} 60%)`,
+      fontFamily:"'DM Sans', sans-serif",
+      color:T.text,
+      paddingBottom:48,
+    }}>
+      <div className="safe-top" style={{background:T.bg}}/>
+
+      {/* ── Header ── */}
+      <div style={{
+        padding:"28px 24px 20px",
+        borderBottom:`1px solid ${T.border}`,
+        display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12,
+      }}>
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+            <div style={{
+              width:8,height:8,borderRadius:"50%",
+              background:`radial-gradient(circle, ${T.gold}, ${T.goldDim})`,
+              boxShadow:`0 0 8px ${T.gold}66`,
+            }}/>
+            <span style={{color:T.textDim,fontSize:10,letterSpacing:2,textTransform:"uppercase"}}>Fantasy Premier League</span>
+          </div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:26,letterSpacing:0.5,color:T.text}}>
+            Squad Intelligence
+          </div>
+          <div style={{color:T.textDim,fontSize:11,marginTop:2}}>
+            GW{data.current_gw}–{data.current_gw+2} · Raj's Squad
+          </div>
+        </div>
+        {preview && (
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <img src={preview} alt="squad" style={{width:36,height:36,borderRadius:6,objectFit:"cover",border:`1px solid ${T.border}`}}/>
+            <button onClick={()=>{setData(PRELOADED);setPreview(null);setTab("gw0")}} style={{
+              background:"transparent",border:`1px solid ${T.border}`,color:T.textDim,
+              padding:"6px 14px",borderRadius:7,cursor:"pointer",
+              fontFamily:"'DM Sans',sans-serif",fontSize:12,
+            }}>Reset</button>
+          </div>
+        )}
+      </div>
+
+      <div style={{padding:"20px 24px 0",display:"flex",flexDirection:"column",gap:20}}>
+        {/* Overview strip */}
+        <OverviewStrip players={data.players} rotations={data.rotations} gwList={gwList}/>
+
+        {/* Tab bar */}
+        <div style={{display:"flex",gap:2,background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,padding:3,flexWrap:"wrap"}}>
+          {tabs.map(([k,l])=>(
+            <button key={k} onClick={()=>setTab(k)} style={{
+              flex:1,minWidth:60,
+              background: tab===k ? T.surfaceHi : "transparent",
+              border: tab===k ? `1px solid ${T.borderHi}` : "1px solid transparent",
+              color: tab===k ? T.text : T.textDim,
+              padding:"8px 6px",borderRadius:7,cursor:"pointer",
+              fontFamily:"'DM Sans',sans-serif",fontWeight:tab===k?500:400,
+              fontSize:12,letterSpacing:0.3,transition:"all 0.15s",
+            }}>{l}</button>
+          ))}
+        </div>
+
+        {/* Content */}
+        {tab.startsWith("gw") && tab!=="upload" && (()=>{
+          const idx = parseInt(tab.replace("gw",""));
+          return <GWPanel gw={gwList[idx]} players={data.players} rotations={data.rotations}/>;
+        })()}
+
+        {tab==="transfers" && (
+          <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+            {/* Controls: budget + free transfers */}
+            <div style={{
+              background:T.surface, border:`1px solid ${T.border}`,
+              borderRadius:12, padding:"16px 18px",
+              display:"flex", gap:16, flexWrap:"wrap", alignItems:"stretch",
+            }}>
+              {/* Budget */}
+              <div style={{flex:1,minWidth:140,display:"flex",flexDirection:"column",gap:10}}>
+                <div>
+                  <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:2}}>Money in Bank</div>
+                  <div style={{color:T.textMid,fontSize:11}}>Free cash after squad value</div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <button onClick={()=>setBudget(b=>Math.max(0,parseFloat((b-0.5).toFixed(1))))} style={{width:30,height:30,borderRadius:6,background:T.bg,border:`1px solid ${T.border}`,color:T.textMid,fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                  <div style={{textAlign:"center",minWidth:52}}>
+                    <div style={{fontFamily:"'DM Serif Display',serif",fontSize:24,color:T.gold,lineHeight:1}}>£{budget.toFixed(1)}m</div>
+                  </div>
+                  <button onClick={()=>setBudget(b=>Math.min(20,parseFloat((b+0.5).toFixed(1))))} style={{width:30,height:30,borderRadius:6,background:T.bg,border:`1px solid ${T.border}`,color:T.textMid,fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                </div>
+              </div>
+
+              <div style={{width:1,background:T.border,flexShrink:0}}/>
+
+              {/* Free transfers */}
+              <div style={{flex:1,minWidth:140,display:"flex",flexDirection:"column",gap:10}}>
+                <div>
+                  <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:2}}>Free Transfers</div>
+                  <div style={{color:T.textMid,fontSize:11}}>Transfers without −4pt hit</div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  {[1,2,3,4,5].map(n=>(
+                    <button key={n} onClick={()=>setFreeTx(n)} style={{
+                      flex:1, padding:"8px 4px", borderRadius:7, cursor:"pointer",
+                      background: freeTx===n ? `${T.gold}22` : T.bg,
+                      border: `1px solid ${freeTx===n ? T.goldDim : T.border}`,
+                      color: freeTx===n ? T.gold : T.textDim,
+                      fontFamily:"'DM Serif Display',serif", fontSize:16,
+                      transition:"all 0.15s",
+                    }}>{n}</button>
+                  ))}
+                </div>
+                <div style={{color:T.textDim,fontSize:10}}>
+                  {freeTx===1?"1 free · extras cost −4pts each"
+                  :freeTx===2?"2 free · extras cost −4pts each"
+                  :freeTx===3?"3 free · 1 extra = −4pts"
+                  :freeTx===4?"4 free · all transfers are free"
+                  :"5 free · wildcard or rolled transfers"}
+                </div>
+              </div>
+            </div>
+
+            {/* Smart recommendation engine */}
+            {(() => {
+              const all = data.transfers || [];
+
+              // Enrich each transfer with sell value, net cost, affordability, pts gain
+              const enriched = all.map(t => {
+                const selling  = data.players.find(p => p.web_name===t.out || p.web_name?.toLowerCase()===t.out?.toLowerCase());
+                const sellVal  = selling ? selling.cost : 0;
+                const netCost  = parseFloat((t.in_cost - sellVal).toFixed(1));
+                const canAfford= t.in_cost <= sellVal + budget;
+                const projTotal= (t.proj||[]).reduce((a,b)=>a+b,0);
+                return { ...t, sellVal, netCost, canAfford, projTotal };
+              });
+
+              const affordable = enriched.filter(t=>t.canAfford);
+              const locked     = enriched.filter(t=>!t.canAfford);
+
+              // Pick optimal set within free transfers (greedy by pts gain, penalise hits)
+              // Sort affordable by projected pts descending
+              const sorted = [...affordable].sort((a,b)=>b.projTotal-a.projTotal);
+
+              // Build recommendation plan
+              const plan = [];
+              let remainingFree = freeTx;
+              let remainingBudget = budget;
+
+              for (const t of sorted) {
+                if (plan.length >= freeTx + 1) break; // never recommend more than free+1
+                if (t.netCost <= remainingBudget) {
+                  const isFree = remainingFree > 0;
+                  const ptsCost = isFree ? 0 : 4;
+                  plan.push({ ...t, isFree, ptsCost });
+                  remainingBudget = parseFloat((remainingBudget - Math.max(0, t.netCost)).toFixed(1));
+                  if (isFree) remainingFree--;
+                }
+              }
+
+              const planPtsGain   = plan.reduce((s,t)=>s+t.projTotal,0).toFixed(1);
+              const planPtsCost   = plan.reduce((s,t)=>s+t.ptsCost,0);
+              const planNetBenefit= (parseFloat(planPtsGain) - planPtsCost).toFixed(1);
+
+              return (
+                <>
+                  {/* Recommended plan banner */}
+                  {plan.length > 0 && (
+                    <div style={{background:`${T.gold}0d`,border:`1px solid ${T.goldDim}55`,borderRadius:12,padding:"14px 18px"}}>
+                      <div style={{color:T.gold,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>Recommended Plan · {plan.length} Transfer{plan.length>1?"s":""}</div>
+                      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+                        {plan.map((t,i)=>(
+                          <div key={i} style={{display:"flex",alignItems:"center",gap:6,background:T.bg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px"}}>
+                            <span style={{fontFamily:"'DM Serif Display',serif",fontSize:14,color:T.red}}>{t.out}</span>
+                            <span style={{color:T.textDim,fontSize:12}}>→</span>
+                            <span style={{fontFamily:"'DM Serif Display',serif",fontSize:14,color:T.green}}>{t.in}</span>
+                            {t.isFree
+                              ? <Badge label="Free" color={T.green}/>
+                              : <Badge label="−4pts" color={T.red}/>
+                            }
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                        <div style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 14px",textAlign:"center"}}>
+                          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:T.green,lineHeight:1}}>+{planPtsGain}</div>
+                          <div style={{color:T.textDim,fontSize:9,letterSpacing:0.8,marginTop:2}}>Pts gained (3GW)</div>
+                        </div>
+                        {planPtsCost > 0 && (
+                          <div style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 14px",textAlign:"center"}}>
+                            <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:T.red,lineHeight:1}}>−{planPtsCost}</div>
+                            <div style={{color:T.textDim,fontSize:9,letterSpacing:0.8,marginTop:2}}>Hit cost</div>
+                          </div>
+                        )}
+                        <div style={{background:T.goldGlow,border:`1px solid ${T.goldDim}44`,borderRadius:7,padding:"6px 14px",textAlign:"center"}}>
+                          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:T.gold,lineHeight:1}}>{planNetBenefit}</div>
+                          <div style={{color:T.goldDim,fontSize:9,letterSpacing:0.8,marginTop:2}}>Net benefit</div>
+                        </div>
+                        <div style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 14px",textAlign:"center"}}>
+                          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:18,color:T.textMid,lineHeight:1}}>£{(budget - plan.reduce((s,t)=>s+Math.max(0,t.netCost),0)).toFixed(1)}m</div>
+                          <div style={{color:T.textDim,fontSize:9,letterSpacing:0.8,marginTop:2}}>Remaining bank</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Affordable transfers */}
+                  <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase"}}>
+                    Affordable · {affordable.length} of {all.length} available
+                  </div>
+                  {affordable.length===0 && (
+                    <div style={{color:T.textDim,fontSize:13,padding:"12px 0"}}>No affordable transfers found. Adjust budget above.</div>
+                  )}
+                  {affordable.map((t,i)=>{
+                    const inPlan = plan.find(p=>p.out===t.out && p.in===t.in);
+                    return <TransferCard key={i} t={t} idx={i} netCost={t.netCost.toFixed(1)} budget={budget} recommended={!!inPlan} isFree={inPlan?.isFree}/>;
+                  })}
+
+                  {/* Locked / out of budget */}
+                  {locked.length > 0 && (
+                    <>
+                      <div style={{color:T.textDim,fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginTop:4,opacity:0.5}}>
+                        Out of Budget · increase bank to unlock
+                      </div>
+                      {locked.map((t,i)=>{
+                        const shortfall = (t.in_cost - t.sellVal - budget).toFixed(1);
+                        return <TransferCard key={i} t={t} idx={affordable.length+i} netCost={t.netCost.toFixed(1)} budget={budget} shortfall={shortfall} locked/>;
+                      })}
+                    </>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        )}
+
+        {tab==="upload" && <UploadPanel onAnalyse={onAnalyse}/>}
+      </div>
+    </div>
+  );
+}
+
+// ── Mount ────────────────────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
